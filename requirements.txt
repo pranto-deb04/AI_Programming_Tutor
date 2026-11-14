@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+sqlalchemy
+langchain
+chromadb
+google-generativeai
+pydantic
+python-multipart
+pandas
+matplotlib
