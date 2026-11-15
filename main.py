@@ -40,20 +40,26 @@ bearer_scheme = HTTPBearer()
 # PYDANTIC SCHEMAS
 # ==============================
 
-# Student Registration Schema
 class StudentCreate(BaseModel):
     name: str = Field(min_length=2, max_length=100)
     email: EmailStr
     password: str = Field(min_length=8)
 
 
-# Student Login Schema
 class StudentLogin(BaseModel):
     email: EmailStr
     password: str
 
 
-# Student Response Schema
+class StudentUpdate(BaseModel):
+    name: str | None = Field(
+        default=None,
+        min_length=2,
+        max_length=100
+    )
+    email: EmailStr | None = None
+
+
 class StudentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -87,7 +93,6 @@ def register_student(
     db: Session = Depends(get_db)
 ):
 
-    # Check existing email
     existing_student = db.query(Student).filter(
         Student.email == student_data.email
     ).first()
@@ -98,12 +103,10 @@ def register_student(
             detail="Email already registered"
         )
 
-    # Hash password
     hashed_password = hash_password(
         student_data.password
     )
 
-    # Create student
     new_student = Student(
         name=student_data.name,
         email=student_data.email,
@@ -127,19 +130,16 @@ def login_student(
     db: Session = Depends(get_db)
 ):
 
-    # Find student by email
     student = db.query(Student).filter(
         Student.email == login_data.email
     ).first()
 
-    # Check student exists
     if not student:
         raise HTTPException(
             status_code=401,
             detail="Invalid email or password"
         )
 
-    # Verify password
     if not verify_password(
         login_data.password,
         student.password
@@ -149,7 +149,6 @@ def login_student(
             detail="Invalid email or password"
         )
 
-    # Generate JWT Access Token
     access_token = create_access_token(
         data={"sub": str(student.id)}
     )
@@ -178,7 +177,6 @@ def get_current_student(
     token = credentials.credentials
 
     try:
-        # Decode JWT Token
         payload = decode_access_token(token)
 
         student_id = payload.get("sub")
@@ -201,7 +199,6 @@ def get_current_student(
             }
         )
 
-    # Find student in database
     student = db.query(Student).filter(
         Student.id == student_id
     ).first()
@@ -233,3 +230,168 @@ def read_current_student(
 ):
 
     return current_student
+
+
+# ==============================
+# GET ALL STUDENTS API
+# ==============================
+
+@app.get(
+    "/students",
+    response_model=list[StudentResponse]
+)
+def get_students(
+    current_student: Student = Depends(
+        get_current_student
+    ),
+    db: Session = Depends(get_db)
+):
+
+    students = db.query(Student).all()
+
+    return students
+
+
+# ==============================
+# GET STUDENT BY ID API
+# ==============================
+
+@app.get(
+    "/students/{student_id}",
+    response_model=StudentResponse
+)
+def get_student_by_id(
+    student_id: int,
+    current_student: Student = Depends(
+        get_current_student
+    ),
+    db: Session = Depends(get_db)
+):
+
+    student = db.query(Student).filter(
+        Student.id == student_id
+    ).first()
+
+    if not student:
+        raise HTTPException(
+            status_code=404,
+            detail="Student not found"
+        )
+
+    return student
+
+
+# ==============================
+# UPDATE STUDENT PROFILE API
+# ==============================
+
+@app.put(
+    "/students/{student_id}",
+    response_model=StudentResponse
+)
+def update_student(
+    student_id: int,
+    student_data: StudentUpdate,
+    current_student: Student = Depends(
+        get_current_student
+    ),
+    db: Session = Depends(get_db)
+):
+
+    # Student can update only their own profile
+    if current_student.id != student_id:
+        raise HTTPException(
+            status_code=403,
+            detail="You can only update your own profile"
+        )
+
+    student = db.query(Student).filter(
+        Student.id == student_id
+    ).first()
+
+    if not student:
+        raise HTTPException(
+            status_code=404,
+            detail="Student not found"
+        )
+
+    update_data = student_data.model_dump(
+        exclude_unset=True
+    )
+
+    if not update_data:
+        raise HTTPException(
+            status_code=400,
+            detail="No update data provided"
+        )
+
+    if "name" in update_data and update_data["name"] is None:
+        raise HTTPException(
+            status_code=422,
+            detail="Name cannot be null"
+        )
+
+    if "email" in update_data and update_data["email"] is None:
+        raise HTTPException(
+            status_code=422,
+            detail="Email cannot be null"
+        )
+
+    if "email" in update_data:
+        existing_student = db.query(Student).filter(
+            Student.email == update_data["email"],
+            Student.id != student_id
+        ).first()
+
+        if existing_student:
+            raise HTTPException(
+                status_code=409,
+                detail="Email already registered"
+            )
+
+    for key, value in update_data.items():
+        setattr(student, key, value)
+
+    db.commit()
+    db.refresh(student)
+
+    return student
+
+
+# ==============================
+# DELETE STUDENT ACCOUNT API
+# ==============================
+
+@app.delete("/students/{student_id}")
+def delete_student(
+    student_id: int,
+    current_student: Student = Depends(
+        get_current_student
+    ),
+    db: Session = Depends(get_db)
+):
+
+    # Student can delete only their own account
+    if current_student.id != student_id:
+        raise HTTPException(
+            status_code=403,
+            detail="You can only delete your own account"
+        )
+
+    student = db.query(Student).filter(
+        Student.id == student_id
+    ).first()
+
+    if not student:
+        raise HTTPException(
+            status_code=404,
+            detail="Student not found"
+        )
+
+    db.delete(student)
+    db.commit()
+
+    return {
+        "message": "Student account deleted successfully",
+        "student_id": student_id
+    }
