@@ -1,21 +1,48 @@
+from pathlib import Path
+
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import DeclarativeBase, sessionmaker, Session
 
-SQLALCHEMY_DATABASE_URL = "sqlite:///./ai_tutor.db"
 
+# Project directory
+BASE_DIR = Path(__file__).resolve().parent
+
+# SQLite database file
+DATABASE_PATH = BASE_DIR / "students.db"
+
+DATABASE_URL = f"sqlite:///{DATABASE_PATH.as_posix()}"
+
+
+# Create SQLAlchemy engine
 engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
+    DATABASE_URL,
+    connect_args={"check_same_thread": False}
 )
 
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-Base = declarative_base()
+# Create database session
+SessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine
+)
 
 
+# Base class for database models
+class Base(DeclarativeBase):
+    pass
+
+
+# Database dependency
 def get_db():
-    db = SessionLocal()
+    db: Session = SessionLocal()
+
     try:
         yield db
     finally:
         db.close()
+
+
+# Initialize database tables
+def init_db():
+    Base.metadata.create_all(bind=engine)
