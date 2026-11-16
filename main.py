@@ -15,7 +15,8 @@ from pydantic import BaseModel, Field, EmailStr, ConfigDict
 from sqlalchemy.orm import Session
 
 import jwt
-
+import os
+from fastapi import UploadFile, File
 from database import get_db, init_db
 from models import Student
 
@@ -66,6 +67,7 @@ class StudentResponse(BaseModel):
     id: int
     name: str
     email: EmailStr
+    skill_level: str
 
 
 # ==============================
@@ -394,4 +396,34 @@ def delete_student(
     return {
         "message": "Student account deleted successfully",
         "student_id": student_id
+    }
+
+# ==============================
+# TEACHER MATERIAL UPLOAD API
+# ==============================
+
+
+UPLOAD_DIR = "uploaded_materials"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
+@app.post("/upload_material")
+def upload_course_material(
+    file: UploadFile = File(...),
+    current_student: Student = Depends(get_current_student)
+):
+    # Check if the file is a PDF
+    if not file.filename.endswith(".pdf"):
+        raise HTTPException(
+            status_code=400, detail="Only PDF files are allowed")
+
+    file_location = f"{UPLOAD_DIR}/{file.filename}"
+
+    with open(file_location, "wb+") as file_object:
+        file_object.write(file.file.read())
+
+    return {
+        "message": "File uploaded successfully!",
+        "filename": file.filename,
+        "saved_location": file_location
     }
