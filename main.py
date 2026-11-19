@@ -1,4 +1,3 @@
-
 from fastapi import (
     FastAPI,
     Depends,
@@ -11,12 +10,20 @@ from fastapi.security import (
     HTTPAuthorizationCredentials
 )
 
-from pydantic import BaseModel, Field, EmailStr, ConfigDict
+from pydantic import (
+    BaseModel,
+    Field,
+    EmailStr,
+    ConfigDict
+)
+
 from sqlalchemy.orm import Session
 
 import jwt
 import os
+
 from fastapi import UploadFile, File
+
 from database import get_db, init_db
 from models import Student
 
@@ -26,6 +33,9 @@ from security import (
     create_access_token,
     decode_access_token
 )
+
+# RAG service
+from rag_service import ingest_pdf, ask_question
 
 
 app = FastAPI(title="AI Tutor API")
@@ -68,6 +78,23 @@ class StudentResponse(BaseModel):
     name: str
     email: EmailStr
     skill_level: str
+
+
+# ==============================
+# RAG QUESTION SCHEMA
+# ==============================
+
+class TutorQuestion(BaseModel):
+    question: str = Field(
+        min_length=2,
+        max_length=2000
+    )
+
+    top_k: int = Field(
+        default=4,
+        ge=1,
+        le=10
+    )
 
 
 # ==============================
@@ -398,32 +425,126 @@ def delete_student(
         "student_id": student_id
     }
 
+
 # ==============================
 # TEACHER MATERIAL UPLOAD API
 # ==============================
 
-
 UPLOAD_DIR = "uploaded_materials"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+os.makedirs(
+    UPLOAD_DIR,
+    exist_ok=True
+)
 
 
 @app.post("/upload_material")
 def upload_course_material(
     file: UploadFile = File(...),
-    current_student: Student = Depends(get_current_student)
+    current_student: Student = Depends(
+        get_current_student
+    )
 ):
+
     # Check if the file is a PDF
-    if not file.filename.endswith(".pdf"):
+    if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(
-            status_code=400, detail="Only PDF files are allowed")
+            status_code=400,
+            detail="Only PDF files are allowed"
+        )
 
-    file_location = f"{UPLOAD_DIR}/{file.filename}"
+    file_location = os.path.join(
+        UPLOAD_DIR,
+        file.filename
+    )
 
-    with open(file_location, "wb+") as file_object:
-        file_object.write(file.file.read())
+    with open(
+        file_location,
+        "wb"
+    ) as file_object:
+
+        file_object.write(
+            file.file.read()
+        )
 
     return {
         "message": "File uploaded successfully!",
         "filename": file.filename,
         "saved_location": file_location
     }
+
+
+# ==============================
+# RAG - INDEX COURSE MATERIAL
+# ==============================
+
+@app.post("/ingest_material/{filename}")
+def ingest_course_material(
+    filename: str,
+    current_student: Student = Depends(
+        get_current_student
+    )
+):
+
+    try:
+
+        result = ingest_pdf(filename)
+
+        return result
+
+    except FileNotFoundError as e:
+
+        raise HTTPException(
+            status_code=404,
+            detail=str(e)
+        )
+
+    except ValueError as e:
+
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        )
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to index PDF: {str(e)}"
+        )
+
+
+# ==============================
+# RAG - ASK AI TUTOR
+# ==============================
+
+@app.post("/ask")
+def ask_ai_tutor(
+    question_data: TutorQuestion,
+    current_student: Student = Depends(
+        get_current_student
+    )
+):
+
+    try:
+
+        result = ask_question(
+            question=question_data.question,
+            top_k=question_data.top_k
+        )
+
+        return result
+
+    except ValueError as e:
+
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        )
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"AI Tutor error: {str(e)}"
+        )
